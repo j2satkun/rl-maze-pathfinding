@@ -1,0 +1,42 @@
+{
+    "maze_1": {
+        "file": "maze_1.npy",
+        "seed": 449650,
+        "size": [
+            4,
+            4
+        ]
+    },
+    "maze_2": {
+        "file": "maze_2.npy",
+        "seed": 14401,
+        "size": [
+            4,
+            4
+        ]
+    },
+    "maze_3": {
+        "file": "maze_3.npy",
+        "seed": 798382,
+        "size": [
+            4,
+            4
+        ]
+    },
+    "maze_4": {
+        "file": "maze_4.npy",
+        "seed": 118994,
+        "size": [
+            4,
+            4
+        ]
+    },
+    "maze_5": {
+        "file": "maze_5.npy",
+        "seed": 528624,
+        "size": [
+            4,
+            4
+        ]
+    }
+}
