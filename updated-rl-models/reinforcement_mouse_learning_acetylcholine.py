@@ -825,6 +825,8 @@ class BioExperiment:
                     # Early stopping
                     if win_rate > 0.9:
                         epsilon = 0.05
+                    if win_rate > 0.8:
+                        track_neuromod = True
                     if win_rate == 1.0:
                         print(f"Reached 100% episode win rate at epoch: {epoch}")
                         break
@@ -840,7 +842,7 @@ class BioExperiment:
 
 # Run the experiment
 if __name__ == "__main__":
-    for i in range(1, 6):
+    for i in range(4, 6):
         name = f"acetylcholine_{i:02d}"
         
         # load the pre-generated maze
