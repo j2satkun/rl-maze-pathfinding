@@ -850,6 +850,8 @@ class BioExperiment:
                     # Early stopping
                     if win_rate > 0.9:
                         epsilon = max(0.05, epsilon * 0.99)  # Gradually reduce exploration
+                    if win_rate > 0.8:
+                        track_neuromod = True
                     if win_rate == 1.0 and episodes_in_epoch >= 10:
                         print(f"Reached 100% episode win rate at epoch: {epoch}")
                         break
