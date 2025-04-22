@@ -1,42 +1,42 @@
 {
     "maze_1": {
         "file": "maze_1.npy",
-        "seed": 288959,
+        "seed": 412366,
         "size": [
-            5,
-            5
+            6,
+            6
         ]
     },
     "maze_2": {
         "file": "maze_2.npy",
-        "seed": 123904,
+        "seed": 960393,
         "size": [
-            5,
-            5
+            6,
+            6
         ]
     },
     "maze_3": {
         "file": "maze_3.npy",
-        "seed": 786475,
+        "seed": 652942,
         "size": [
-            5,
-            5
+            6,
+            6
         ]
     },
     "maze_4": {
         "file": "maze_4.npy",
-        "seed": 698048,
+        "seed": 773571,
         "size": [
-            5,
-            5
+            6,
+            6
         ]
     },
     "maze_5": {
         "file": "maze_5.npy",
-        "seed": 55958,
+        "seed": 823469,
         "size": [
-            5,
-            5
+            6,
+            6
         ]
     }
 }
