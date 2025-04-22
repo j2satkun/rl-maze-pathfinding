@@ -826,6 +826,7 @@ class BioExperiment:
                     # Early stopping
                     if win_rate > 0.9:
                         epsilon = 0.05
+                        track_neuromod = True
                     if win_rate == 1.0:
                         print(f"Reached 100% episode win rate at epoch: {epoch}")
                         break
