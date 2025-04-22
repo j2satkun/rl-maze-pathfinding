@@ -10,18 +10,14 @@ Original file is located at
 
 ### Importing neccesary libraries for data creation and visualization
 """
-
-!pip install tensorflow
-
-!pip install keras
-
-# Commented out IPython magic to ensure Python compatibility.
+import csv
+from collections import deque
 import matplotlib.pyplot as plt
-# %matplotlib inline
 import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Activation, PReLU
-from tensorflow.keras.optimizers import SGD, Adam, RMSprop
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.distributions import Categorical
 from random import randint
 import os, sys, time, datetime, json, random
 
@@ -218,6 +214,42 @@ class Qmaze(object):
 
         return actions
 
+    def shortest_path(self, start=None, goal=None):
+        """Find shortest path from start to goal using BFS."""
+        if start is None:
+            row, col, _ = self.state
+            start = (row, col)
+        if goal is None:
+            goal = self.target
+
+        queue = deque()
+        queue.append((start, [start]))  # (current_pos, path_so_far)
+        visited = set()
+        visited.add(start)
+
+        while queue:
+            current, path = queue.popleft()
+            if current == goal:
+                return path
+
+            for action in self.valid_actions(current):
+                r, c = current
+                if action == LEFT:
+                    neighbor = (r, c - 1)
+                elif action == RIGHT:
+                    neighbor = (r, c + 1)
+                elif action == UP:
+                    neighbor = (r - 1, c)
+                elif action == DOWN:
+                    neighbor = (r + 1, c)
+                else:
+                    continue
+
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+
+        return None  # No path found
 
 # show 8x8 maze | WALL = BLACK | MOUSE = DARK GRAY | PATH = LIGHT GRAY | CHEESE = VERY LIGHT GRAY
 def show(qmaze: Qmaze):
@@ -455,11 +487,6 @@ class AcetylcholineSystem:
         self.tonic = self.tonic * (1 - self.tau) + (self.baseline + self.phasic) * self.tau
         return torch.clamp(self.tonic + self.phasic, 0, 1)
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.distributions import Categorical
-
 class BioModel(nn.Module):
     def __init__(self, maze_size, num_actions):
         super(BioModel, self).__init__()
@@ -646,7 +673,7 @@ class BioExperiment:
         else:
             return f"{seconds/3600:.2f} hours"
 
-    def train(self, **opt):
+    def train(self, log_file=None, **opt):
         global epsilon
         show(self.qmaze)
         print("Training biologically plausible model...")
@@ -654,91 +681,157 @@ class BioExperiment:
         number_epoch = opt.get('epochs', 1000)
         max_memory = opt.get('max_memory', 8)
         data_size = opt.get('data_size', 32)  # Used as number of episodes per epoch
-        name = opt.get('name', 'bio_model')
+        model_name = opt.get('name', 'bio_model')
         start_time = time.time()
+
+        data_folder = f"experiments/{model_name}"
+        os.makedirs(data_folder, exist_ok=True)
+
+        if log_file is None:
+            log_file = f"{data_folder}/{model_name}_training_metrics.csv"
 
         experience = BioExperience(self.model, max_memory=max_memory)
         completion_history = []
         hsize = self.qmaze.maze.size // 2
         total_wins = 0
+        track_neuromod = False
 
-        for epoch in range(number_epoch):
-            epoch_start_time = time.time()
-            total_loss = 0.0
-            wins_in_epoch = 0
-            episodes_in_epoch = 0
+        with open(log_file, mode='w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=[
+                "epoch", "loss", "episodes", "steps", "win count", "win_rate",
+                "optimal_path_length", "suboptimal_steps", "total_reward", 
+                "learning_rate", "elapsed_time"
+            ])
+            writer.writeheader()
 
-            for episode in range(data_size):
-                mouse_cell = random.choice(self.qmaze.free_cells)
-                self.qmaze.reset(mouse_cell)
-                env_state = self.qmaze.observe()
-                trial_over = False
+            # Create neuromodulator log file and write header
+            with open(f"{data_folder}/{model_name}_neuromodulators.csv", 'w', newline='') as nf:
+                neurowriter = csv.DictWriter(nf, fieldnames=[
+                    "epoch", "episode", "step", "dopamine", "reward", "status"
+                ])
+                neurowriter.writeheader()
 
-                while not trial_over:
-                    valid_actions = self.qmaze.valid_actions()
-                    if not valid_actions:
+                for epoch in range(number_epoch):
+                    epoch_start_time = time.time()
+                    total_loss = 0.0
+                    wins_in_epoch = 0
+                    episodes_in_epoch = 0
+                    total_reward_in_epoch = 0
+                    total_steps_in_epoch = 0
+
+                    for episode in range(data_size):
+                        mouse_cell = random.choice(self.qmaze.free_cells)
+                        self.qmaze.reset(mouse_cell)
+                        env_state = self.qmaze.observe()
+                        trial_over = False
+                        episode_reward = 0
+                        steps_in_episode = 0
+
+                        while not trial_over:
+                            valid_actions = self.qmaze.valid_actions()
+                            if not valid_actions:
+                                break
+
+                            prev_env_state = env_state
+
+                            # Acetylcholine-modulated exploration
+                            if np.random.rand() < epsilon * (1 - self.model.acetylcholine.item()):
+                                action = random.choice(valid_actions)
+                            else:
+                                with torch.no_grad():
+                                    q_values = self.model(torch.FloatTensor(prev_env_state).view(1, -1))
+                                    action = torch.argmax(q_values).item()
+
+                            env_state, reward, status = self.qmaze.act(action)
+                            episode_reward += reward
+                            trial_over = (status != 'not_over')
+
+                            experience.remember((prev_env_state, action, reward, env_state, trial_over))
+
+                            if trial_over:
+                                episodes_in_epoch += 1
+                                if status == "win":
+                                    wins_in_epoch += 1
+                                    total_wins += 1
+                                completion_history.append(1 if status == "win" else 0)
+
+                            if track_neuromod:
+                                neurowriter.writerow({
+                                    "epoch": epoch,
+                                    "episode": episode,
+                                    "step": steps_in_episode,
+                                    "acetylcholine": self.model.acetylcholine.item(),
+                                    "reward": reward,
+                                    "status": status
+                                })
+
+                            steps_in_episode += 1
+
+                        total_reward_in_epoch += episode_reward
+
+                        # Learning update after each episode
+                        inputs, targets = experience.data(data_size=data_size)
+                        self.optimizer.zero_grad()
+                        outputs = self.model(inputs)
+                        loss = nn.MSELoss()(outputs, targets.squeeze())
+                        loss.backward()
+
+                        for name, param in self.model.named_parameters():
+                            if 'direct_pathway' in name and param.grad is not None:
+                                param.grad *= (1 + self.model.acetylcholine.item())
+                            elif 'indirect_pathway' in name and param.grad is not None:
+                                param.grad *= (1 - self.model.acetylcholine.item())
+
+                        self.optimizer.step()
+                        total_loss += loss.item()
+
+                    # Win rate is now calculated over all episodes in the epoch
+                    win_rate = wins_in_epoch / episodes_in_epoch if episodes_in_epoch > 0 else 0
+                    total_time = time.time() - start_time
+                    avg_loss = total_loss / episodes_in_epoch if episodes_in_epoch > 0 else 0
+
+                    try:
+                        optimal_path = self.qmaze.shortest_path(mouse_cell)
+                        optimal_path_length = len(optimal_path)
+                    except:
+                        optimal_path_length = -1  # fallback if path not found
+
+                    suboptimal_steps = max(0, episodes_in_epoch - optimal_path_length)
+
+                    learning_rate = self.optimizer.param_groups[0]['lr']
+
+                    # log metrics to csv
+                    writer.writerow({
+                        "epoch": epoch,
+                        "loss": avg_loss,
+                        "episodes": episodes_in_epoch,
+                        "steps": total_steps_in_epoch,
+                        "win count": wins_in_epoch,
+                        "win_rate": win_rate,
+                        "optimal_path_length": optimal_path_length,
+                        "suboptimal_steps": suboptimal_steps,
+                        "total_reward": total_reward_in_epoch,
+                        "learning_rate": learning_rate,
+                        "elapsed_time": total_time
+                    })
+
+                    print(f"Epoch: {epoch:03d}/{number_epoch - 1} | "
+                        f"Loss: {avg_loss:.4f} | "
+                        f"Episodes: {episodes_in_epoch} | "
+                        f"Win count: {total_wins} | "
+                        f"Win rate: {win_rate:.3f} | "
+                        f"time: {total_time:.1f} seconds")
+
+                    # Early stopping
+                    if win_rate > 0.9:
+                        epsilon = 0.05
+                    if win_rate == 1.0:
+                        print(f"Reached 100% episode win rate at epoch: {epoch}")
                         break
 
-                    prev_env_state = env_state
-
-                    # Dopamine-modulated exploration
-                    if np.random.rand() < epsilon * (1 - self.model.acetylcholine.item()):
-                        action = random.choice(valid_actions)
-                    else:
-                        with torch.no_grad():
-                            q_values = self.model(torch.FloatTensor(prev_env_state).view(1, -1))
-                            action = torch.argmax(q_values).item()
-
-                    env_state, reward, status = self.qmaze.act(action)
-                    trial_over = (status != 'not_over')
-
-                    experience.remember((prev_env_state, action, reward, env_state, trial_over))
-
-                    if trial_over:
-                        episodes_in_epoch += 1
-                        if status == "win":
-                            wins_in_epoch += 1
-                            total_wins += 1
-                        completion_history.append(1 if status == "win" else 0)
-
-                # Learning update after each episode
-                inputs, targets = experience.data(data_size=data_size)
-                self.optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = nn.MSELoss()(outputs, targets.squeeze())
-                loss.backward()
-
-                for name, param in self.model.named_parameters():
-                    if 'direct_pathway' in name and param.grad is not None:
-                        param.grad *= (1 + self.model.acetylcholine.item())
-                    elif 'indirect_pathway' in name and param.grad is not None:
-                        param.grad *= (1 - self.model.acetylcholine.item())
-
-                self.optimizer.step()
-                total_loss += loss.item()
-
-            # Win rate is now calculated over all episodes in the epoch
-            win_rate = wins_in_epoch / episodes_in_epoch if episodes_in_epoch > 0 else 0
-            total_time = time.time() - start_time
-            avg_loss = total_loss / episodes_in_epoch if episodes_in_epoch > 0 else 0
-
-            print(f"Epoch: {epoch:03d}/{number_epoch - 1} | "
-                  f"Loss: {avg_loss:.4f} | "
-                  f"Episodes: {episodes_in_epoch} | "
-                  f"Win count: {total_wins} | "
-                  f"Win rate: {win_rate:.3f} | "
-                  f"time: {total_time:.1f} seconds")
-
-            # Early stopping
-            if win_rate > 0.9:
-                epsilon = 0.05
-            if win_rate == 1.0:
-                print(f"Reached 100% episode win rate at epoch: {epoch}")
-                break
-
-        torch.save(self.model.state_dict(), f"{name}.pth")
+        torch.save(self.model.state_dict(), f"{model_name}.pth")
         final_time = time.time() - start_time
-        print(f"Model saved to {name}.pth")
+        print(f"Model saved to {model_name}.pth")
         print(f"Training completed in {final_time:.1f} seconds")
         print(f"Final win count: {total_wins} out of {number_epoch * data_size} episodes")
         return final_time
@@ -747,9 +840,15 @@ class BioExperiment:
 
 # Run the experiment
 if __name__ == "__main__":
-    # Create a sample maze
-    maze = generate_random_maze()
+    for i in range(1, 6):
+        name = f"acetylcholine_{i:02d}"
+        
+        # load the pre-generated maze
+        maze_path = f"experiments/mazes_5x5/maze_{i}.npy"  # adjust path if needed
+        maze = np.load(maze_path)
 
-    # Initialize and train the biologically plausible model
-    experiment = BioExperiment(maze, learning_rate=0.001)
-    experiment.train(epochs=1000, max_memory=8, data_size=32)
+        # create a new instance of Experiment with the loaded maze
+        experiment = BioExperiment(maze, learning_rate=0.001)
+
+        print(f"Running experiment: {name}")
+        experiment.train(epochs=1000, max_memory=8, data_size=100, name=name)
